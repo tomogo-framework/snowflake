@@ -1,0 +1,62 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        go: ['1.27.0', stable]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    env:
+      GOTOOLCHAIN: local
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version: ${{ matrix.go }}
+          cache: false
+      - name: Verify formatting
+        shell: bash
+        run: test -z "$(gofmt -l .)"
+      - run: go test ./...
+      - run: go test -race ./...
+      - run: go vet ./...
+
+  analysis:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version: stable
+          cache: false
+      - name: Static analysis
+        run: go run honnef.co/go/tools/cmd/staticcheck@v0.8.1 ./...
+      - name: Vulnerability check
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.7.0 ./...
+      - name: Test 32-bit
+        env:
+          GOARCH: '386'
+          CGO_ENABLED: '0'
+        run: go test ./...
+      - name: Bounded fuzz tests
+        shell: bash
+        run: |
+          for target in FuzzParse FuzzUnmarshalJSON FuzzID FuzzTimeBounds; do
+            go test -run '^$' -fuzz "^${target}$" -fuzztime 15s -parallel 2
+          done
